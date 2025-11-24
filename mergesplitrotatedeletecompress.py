@@ -195,38 +195,63 @@ def merge_split_ui():
                         st.experimental_rerun()
 
 
-# ---------- Compressor UI ----------
+# ---------- Compressor UI (with How It Works + inputs) ----------
 def compressor_ui():
     st.header("📄 PDF Compressor / Optimizer")
     st.markdown("""
-    This tool down-samples pages, converts them to JPEG with adjustable quality,
-    and rebuilds a compressed PDF. Preview (first 5 pages) is optional.
-    """)
+### 💡 How Compression Works
+This tool reduces PDF file size by:
+- 🖼️ Downsampling images (e.g., 300 DPI → 100–150 DPI)
+- 🔄 Converting pages to JPEG images with adjustable quality
+- ✂️ Removing unused objects and metadata
+- 🧩 Rebuilding the PDF with compressed images
+
+| PDF Type | Before | After | Approx. Compression |
+|-----------|---------|--------|--------------------|
+| 📄 Scanned Image PDFs | 100 MB | 10–20 MB | ✅ 80–90% reduction |
+| 🧾 Mixed PDFs | 100 MB | 60–80 MB | ⚙️ 20–40% reduction |
+| 🧠 Text-only PDFs | 100 MB | 90–95 MB | ⚠️ Minimal reduction (5–10%) |
+""")
+
     uploaded = st.file_uploader("Upload PDF to compress", type=["pdf"], key="compress_file")
     if not uploaded:
         return
 
     pdf_bytes = uploaded.read()
-    compression_level = st.radio(
-        "Select compression level:",
+
+    # Preset radio kept for ease
+    compression_preset = st.radio(
+        "Preset compression level:",
         ["High Quality (Low Compression)", "Balanced (Recommended)", "Smallest Size (Aggressive Compression)"],
         index=1
     )
 
-    if "High Quality" in compression_level:
-        image_quality = 90
-        dpi = 150
-    elif "Balanced" in compression_level:
-        image_quality = 70
-        dpi = 120
+    st.markdown("**Or override with manual settings:**")
+    # Provide inputs for DPI and JPEG quality (explicit)
+    dpi = st.slider("Render DPI (higher = better quality, larger size)", min_value=72, max_value=300, value=120)
+    jpeg_quality = st.slider("JPEG Quality (1-100)", min_value=10, max_value=95, value=70)
+
+    # If user chooses preset, set defaults but allow override
+    if compression_preset == "High Quality (Low Compression)":
+        default_dpi = 150
+        default_quality = 90
+    elif compression_preset == "Balanced (Recommended)":
+        default_dpi = 120
+        default_quality = 70
     else:
-        image_quality = 50
-        dpi = 100
+        default_dpi = 100
+        default_quality = 50
+
+    # If user hasn't changed sliders (they have default), we respect preset defaults
+    # So only override dpi/quality when slider differs from preset default? Simpler: show a checkbox "Use presets"
+    use_preset = st.checkbox("Use preset values instead of manual sliders", value=True)
+    if use_preset:
+        dpi = default_dpi
+        jpeg_quality = default_quality
 
     show_preview = st.checkbox("Show 5-page preview after compression (slower)", value=True)
     out_name = st.text_input("Output filename (without extension):", value=f"compressed_{uploaded.name.split('.')[0]}")
 
-    # Open with PyMuPDF
     input_pdf = open_fitz_from_bytes(pdf_bytes)
     if input_pdf is None:
         return
@@ -246,7 +271,7 @@ def compressor_ui():
                 pil_img = Image.open(BytesIO(png_bytes)).convert("RGB")
 
                 img_buf = BytesIO()
-                pil_img.save(img_buf, format="JPEG", quality=image_quality, optimize=True)
+                pil_img.save(img_buf, format="JPEG", quality=jpeg_quality, optimize=True)
                 img_buf.seek(0)
                 img_data = img_buf.getvalue()
 
@@ -302,7 +327,7 @@ def compressor_ui():
             progress.empty()
             status.empty()
 
-# ---------- Page Editor UI ----------
+# ---------- Page Editor UI (with rotated thumbnail preview) ----------
 def page_editor_ui():
     st.header("✂️ PDF Page Reorder / Delete / Rotate Tool")
     st.markdown("Thumbnail view — delete pages, rotate them, then set a new order and export.")
@@ -334,9 +359,21 @@ def page_editor_ui():
                 else:
                     st.write("Preview unavailable")
             with cols[1]:
-                rotate = st.selectbox("Rotate Page", [0, 90, 180, 270], index=0, key=f"rotate_{page_number}")
+                # rotation selectbox + immediate visual preview of rotation
+                rotate = st.selectbox("Rotate Page (preview)", [0, 90, 180, 270], index=0, key=f"rotate_{page_number}")
                 delete = st.checkbox("Delete this page", key=f"delete_{page_number}")
                 st.write(f"Original size: {int(page.rect.width)} x {int(page.rect.height)} pts")
+
+                # Live rotated preview using PIL (thumbnail rotated)
+                if thumb_img is not None:
+                    try:
+                        rotated = thumb_img.rotate(-rotate, expand=True)
+                        st.image(rotated, caption=f"Rotated Preview ({rotate}°)", use_column_width=True)
+                    except Exception as e:
+                        st.warning(f"Preview rotate failed: {e}")
+                else:
+                    st.write("No thumbnail to preview rotation.")
+
         page_actions.append({"page": page_number, "rotate": rotate, "delete": delete})
 
     remaining_indices = [i for i, a in enumerate(page_actions) if not a["delete"]]
