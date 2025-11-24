@@ -1,16 +1,75 @@
 import streamlit as st
 from io import BytesIO
 from datetime import datetime
-
-# PDF libraries
-import fitz  # PyMuPDF (fast page rendering & manipulation)
+import fitz  # PyMuPDF
 from PIL import Image
 from PyPDF2 import PdfReader, PdfWriter
 from reportlab.pdfgen import canvas
+import io as _io
 
-# ---------- Page config ----------
+# ---------- Page config & theme-like CSS ----------
 st.set_page_config(layout="wide", page_title="PDF Utilities — Merge / Split / Compress / Edit")
-st.title("📄 PDF Utilities — Merge / Split / Compressor / Page Editor")
+
+# Inject small CSS for a blue professional look
+st.markdown(
+    """
+    <style>
+    /* page background */
+    .stApp {
+        background: #f6f9fc;
+    }
+    /* header card */
+    .header {
+        background: linear-gradient(90deg, #0b63d6 0%, #1e90ff 100%);
+        color: white;
+        padding: 18px;
+        border-radius: 10px;
+        box-shadow: 0 4px 14px rgba(20, 45, 80, 0.08);
+    }
+    .tool-card {
+        background: white;
+        padding: 12px;
+        border-radius: 8px;
+        box-shadow: 0 2px 8px rgba(20, 45, 80, 0.06);
+        margin-bottom: 12px;
+    }
+    .stButton>button {
+        background: #0b63d6;
+        color: white;
+        border-radius: 8px;
+        padding: 6px 12px;
+        border: none;
+    }
+    .stDownloadButton>button {
+        background: #0866c6;
+        color: white;
+        border-radius: 8px;
+        padding: 6px 12px;
+        border: none;
+    }
+    .stCheckbox>div>label {
+        color: #123a6b;
+    }
+    .small-muted { color: #5b6b84; font-size:12px; }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
+
+# ---------- Top Header ----------
+st.markdown(
+    """
+    <div class="header">
+        <h2 style="margin:0">📄 PDF Utilities</h2>
+        <div style="opacity:0.95; font-size:14px; margin-top:6px">
+            Merge · Split · Compress · Page Editor — quick internal tools
+        </div>
+    </div>
+    """,
+    unsafe_allow_html=True,
+)
+
+st.write("")  # spacing
 
 # ---------- Acknowledgement ----------
 ack = st.checkbox(
@@ -40,6 +99,7 @@ def open_fitz_from_bytes(b: bytes):
 # ---------- Merge & Split UI ----------
 def merge_split_ui():
     st.header("🔗 Merge and ✂️ Split PDFs")
+    st.markdown('<div class="tool-card">', unsafe_allow_html=True)
 
     col1, col2 = st.columns(2)
 
@@ -65,7 +125,6 @@ def merge_split_ui():
             try:
                 writer = PdfWriter()
                 for pdf in merge_files:
-                    # Use PyPDF2 to preserve structure
                     reader = PdfReader(pdf)
                     for page in reader.pages:
                         writer.add_page(page)
@@ -194,16 +253,19 @@ def merge_split_ui():
                         st.session_state.split_downloaded = [False] * len(ranges)
                         st.experimental_rerun()
 
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- Compressor UI ----------
 def compressor_ui():
     st.header("📄 PDF Compressor / Optimizer")
+    st.markdown('<div class="tool-card">', unsafe_allow_html=True)
     st.markdown("""
     This tool down-samples pages, converts them to JPEG with adjustable quality,
     and rebuilds a compressed PDF. Preview (first 5 pages) is optional.
     """)
     uploaded = st.file_uploader("Upload PDF to compress", type=["pdf"], key="compress_file")
     if not uploaded:
+        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     pdf_bytes = uploaded.read()
@@ -226,9 +288,9 @@ def compressor_ui():
     show_preview = st.checkbox("Show 5-page preview after compression (slower)", value=True)
     out_name = st.text_input("Output filename (without extension):", value=f"compressed_{uploaded.name.split('.')[0]}")
 
-    # Open with PyMuPDF
     input_pdf = open_fitz_from_bytes(pdf_bytes)
     if input_pdf is None:
+        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     if st.button("🔄 Compress PDF"):
@@ -240,12 +302,10 @@ def compressor_ui():
             for i in range(total_pages):
                 page = input_pdf.load_page(i)
                 pix = page.get_pixmap(dpi=dpi)
-
-                # Ensure PNG bytes from pix; convert to PIL then JPEG using Pillow for quality control
                 png_bytes = pix.tobytes("png")
-                pil_img = Image.open(BytesIO(png_bytes)).convert("RGB")
+                pil_img = Image.open(_io.BytesIO(png_bytes)).convert("RGB")
 
-                img_buf = BytesIO()
+                img_buf = _io.BytesIO()
                 pil_img.save(img_buf, format="JPEG", quality=image_quality, optimize=True)
                 img_buf.seek(0)
                 img_data = img_buf.getvalue()
@@ -301,44 +361,68 @@ def compressor_ui():
                 pass
             progress.empty()
             status.empty()
+    st.markdown('</div>', unsafe_allow_html=True)
 
-# ---------- Page Editor UI ----------
+# ---------- Page Editor UI with rotated-preview ----------
 def page_editor_ui():
     st.header("✂️ PDF Page Reorder / Delete / Rotate Tool")
-    st.markdown("Thumbnail view — delete pages, rotate them, then set a new order and export.")
+    st.markdown('<div class="tool-card">', unsafe_allow_html=True)
+    st.markdown("Thumbnail view — pick rotate/delete and you will see **live rotated preview** inside each page expander.")
+
     uploaded = st.file_uploader("Upload PDF to edit", type=["pdf"], key="edit_file")
     if not uploaded:
+        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     pdf_bytes = uploaded.read()
     doc = open_fitz_from_bytes(pdf_bytes)
     if doc is None:
+        st.markdown('</div>', unsafe_allow_html=True)
         return
 
     st.subheader("📌 Page Controls")
     page_actions = []
     for page_number in range(len(doc)):
         page = doc.load_page(page_number)
+        # create a thumbnail PNG bytes
         try:
             pix = page.get_pixmap(matrix=fitz.Matrix(0.25, 0.25))
             thumb_bytes = pix.tobytes("png")
-            thumb_img = Image.open(BytesIO(thumb_bytes))
+            thumb_img = Image.open(_io.BytesIO(thumb_bytes)).convert("RGB")
         except Exception:
             thumb_img = None
 
+        # Use an expander for each page; rotation select box uses unique key so streamlit re-runs reflect preview
         with st.expander(f"Page {page_number + 1}", expanded=False):
             cols = st.columns([1, 2])
             with cols[0]:
                 if thumb_img:
-                    st.image(thumb_img, caption=f"Page {page_number + 1}", use_column_width=True)
+                    # show original preview first (rotated preview will appear in the right column)
+                    st.image(thumb_img, caption=f"Original Page {page_number + 1}", use_column_width=True)
                 else:
                     st.write("Preview unavailable")
             with cols[1]:
-                rotate = st.selectbox("Rotate Page", [0, 90, 180, 270], index=0, key=f"rotate_{page_number}")
-                delete = st.checkbox("Delete this page", key=f"delete_{page_number}")
-                st.write(f"Original size: {int(page.rect.width)} x {int(page.rect.height)} pts")
+                rotate_key = f"rotate_preview_{page_number}"
+                delete_key = f"delete_preview_{page_number}"
+                rotate = st.selectbox("Rotate Page (preview)", [0, 90, 180, 270], index=0, key=rotate_key)
+                delete = st.checkbox("Delete this page", key=delete_key)
+                st.write(f"Original size: {int(page.rect.width)} x {int(page.rect.height)} pts", )
+                st.write("")  # spacing
+
+                # Live rotated preview using PIL
+                if thumb_img is not None:
+                    try:
+                        # PIL rotate: counter-clockwise; we want visual rotate matching viewer, so rotate by -angle and expand
+                        rotated = thumb_img.rotate(-rotate, expand=True)
+                        st.image(rotated, caption=f"Rotated Preview ({rotate}°)", use_column_width=True)
+                    except Exception as e:
+                        st.warning(f"Preview rotate failed: {e}")
+                else:
+                    st.write("No thumbnail to preview rotation.")
+
         page_actions.append({"page": page_number, "rotate": rotate, "delete": delete})
 
+    # default order of remaining pages
     remaining_indices = [i for i, a in enumerate(page_actions) if not a["delete"]]
     default_order = ",".join(str(i + 1) for i in remaining_indices)
     st.subheader("🔀 Reorder Pages")
@@ -381,6 +465,8 @@ def page_editor_ui():
                 doc.close()
             except Exception:
                 pass
+
+    st.markdown('</div>', unsafe_allow_html=True)
 
 # ---------- Main dispatch ----------
 if mode == "Merge & Split PDFs":
